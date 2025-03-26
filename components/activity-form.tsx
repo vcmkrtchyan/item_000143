@@ -1,12 +1,9 @@
 "use client"
 
-import type React from "react"
-
 import { useState } from "react"
 import { useVolunteer } from "@/context/volunteer-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -15,93 +12,91 @@ import { format } from "date-fns"
 import { cn } from "@/lib/utils"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import type { VolunteerActivity } from "@/types/volunteer"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
+import { zodResolver } from "@hookform/resolvers/zod"
+import { useForm } from "react-hook-form"
+import * as z from "zod"
 
 interface ActivityFormProps {
   existingActivity?: VolunteerActivity
   onComplete?: () => void
-  showTitle?: boolean // New prop to control title visibility
+  showTitle?: boolean
 }
+
+// Define the form schema with Zod
+const formSchema = z
+  .object({
+    name: z.string().min(1, "Activity name is required"),
+    organization: z.string().min(1, "Organization name is required"),
+    description: z.string().min(1, "Description is required"),
+    date: z.date({
+      required_error: "Please select a date",
+    }),
+    hours: z.coerce.number().min(0, "Hours must be 0 or greater"),
+    minutes: z.coerce.number().min(0, "Minutes must be 0 or greater").max(59, "Minutes must be less than 60"),
+  })
+  .refine((data) => data.hours > 0 || data.minutes > 0, {
+    message: "Duration must be greater than 0",
+    path: ["hours"], // Show error on the hours field
+  })
 
 export function ActivityForm({ existingActivity, onComplete, showTitle = true }: ActivityFormProps) {
   const { addActivity, editActivity } = useVolunteer()
-  const [date, setDate] = useState<Date | undefined>(existingActivity ? new Date(existingActivity.date) : new Date())
-  const [name, setName] = useState(existingActivity?.name || "")
-  const [organization, setOrganization] = useState(existingActivity?.organization || "")
-  const [description, setDescription] = useState(existingActivity?.description || "")
-  const [hours, setHours] = useState(existingActivity?.hours.toString() || "0")
-  const [minutes, setMinutes] = useState(existingActivity?.minutes.toString() || "0")
-  const [error, setError] = useState<string | null>(null)
   const [calendarOpen, setCalendarOpen] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
+  // Initialize the form with default values or existing activity values
+  const form = useForm<z.infer<typeof formSchema>>({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      name: existingActivity?.name || "",
+      organization: existingActivity?.organization || "",
+      description: existingActivity?.description || "",
+      date: existingActivity ? new Date(existingActivity.date) : new Date(),
+      hours: existingActivity?.hours || 0,
+      minutes: existingActivity?.minutes || 0,
+    },
+  })
 
-    // Validate that at least some time is logged
-    const hoursNum = Number.parseInt(hours) || 0
-    const minutesNum = Number.parseInt(minutes) || 0
-
-    if (hoursNum === 0 && minutesNum === 0) {
-      setError("Please enter a duration greater than 0")
-      return
-    }
-
+  // Handle form submission
+  function onSubmit(values: z.infer<typeof formSchema>) {
     const activity = {
-      name,
-      organization,
-      description,
-      date: date?.toISOString() || new Date().toISOString(),
-      hours: hoursNum,
-      minutes: minutesNum,
+      name: values.name,
+      organization: values.organization,
+      description: values.description,
+      date: values.date.toISOString(),
+      hours: values.hours,
+      minutes: values.minutes,
     }
 
     if (existingActivity) {
       editActivity({ ...activity, id: existingActivity.id })
     } else {
       addActivity(activity)
+      form.reset({
+        name: "",
+        organization: "",
+        description: "",
+        date: new Date(),
+        hours: 0,
+        minutes: 0,
+      })
     }
-
-    // Reset form if not editing
-    if (!existingActivity) {
-      setName("")
-      setOrganization("")
-      setDescription("")
-      setHours("0")
-      setMinutes("0")
-    }
-
-    setError(null)
 
     if (onComplete) {
       onComplete()
     }
   }
 
-  const handleHoursChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value
-    setHours(value)
-    // Clear error if user is typing
-    if (error && (Number.parseInt(value) > 0 || Number.parseInt(minutes) > 0)) {
-      setError(null)
+  // Handle date selection with Firefox compatibility
+  const handleDateSelect = (date: Date | undefined) => {
+    if (date) {
+      form.setValue("date", date)
+      setCalendarOpen(false)
     }
   }
 
-  const handleMinutesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value
-    // Ensure minutes are between 0-59
-    if (Number.parseInt(value) >= 0 && Number.parseInt(value) <= 59) {
-      setMinutes(value)
-      // Clear error if user is typing
-      if (error && (Number.parseInt(hours) > 0 || Number.parseInt(value) > 0)) {
-        setError(null)
-      }
-    }
-  }
-
-  const handleDateSelect = (selectedDate: Date | undefined) => {
-    setDate(selectedDate)
-    setCalendarOpen(false) // Close the popover when a date is selected
-  }
+  // Check if there's a duration error
+  const hasDurationError = form.formState.errors.hours?.message === "Duration must be greater than 0"
 
   return (
     <Card className="w-full">
@@ -110,110 +105,160 @@ export function ActivityForm({ existingActivity, onComplete, showTitle = true }:
           <CardTitle>{existingActivity ? "Edit Activity" : "Log Volunteer Hours"}</CardTitle>
         </CardHeader>
       )}
-      <form onSubmit={handleSubmit}>
-        <CardContent className={cn("space-y-4", !showTitle && "pt-2")}>
-          <div className="space-y-2">
-            <Label htmlFor="name">Activity Name</Label>
-            <Input
-              id="name"
-              placeholder="Activity name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
+
+      <Form {...form}>
+        <form onSubmit={form.handleSubmit(onSubmit)}>
+          <CardContent className={cn("space-y-4", !showTitle && "pt-2")}>
+            <FormField
+              control={form.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Activity Name</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Activity name" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
-          </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="organization">Organization</Label>
-            <Input
-              id="organization"
-              placeholder="Organization name"
-              value={organization}
-              onChange={(e) => setOrganization(e.target.value)}
-              required
+            <FormField
+              control={form.control}
+              name="organization"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Organization</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Organization name" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
-          </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="description">Activity Description</Label>
-            <Textarea
-              id="description"
-              placeholder="Describe your volunteer activity"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              required
+            <FormField
+              control={form.control}
+              name="description"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Activity Description</FormLabel>
+                  <FormControl>
+                    <Textarea placeholder="Describe your volunteer activity" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
-          </div>
 
-          <div className="space-y-2">
-            <Label>Date</Label>
-            <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  className={cn("w-full justify-start text-left font-normal", !date && "text-muted-foreground")}
-                >
-                  <CalendarIcon className="mr-2 h-4 w-4" />
-                  {date ? format(date, "PPP") : <span>Pick a date</span>}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0">
-                <Calendar mode="single" selected={date} onSelect={handleDateSelect} initialFocus />
-              </PopoverContent>
-            </Popover>
-          </div>
+            <FormField
+              control={form.control}
+              name="date"
+              render={({ field }) => (
+                <FormItem className="flex flex-col">
+                  <FormLabel>Date</FormLabel>
+                  <Popover open={calendarOpen} onOpenChange={setCalendarOpen} modal={true}>
+                    <PopoverTrigger asChild>
+                      <FormControl>
+                        <Button
+                          type="button"
+                          variant={"outline"}
+                          className={cn(
+                            "w-full justify-start text-left font-normal",
+                            !field.value && "text-muted-foreground",
+                          )}
+                          onClick={() => setCalendarOpen(true)}
+                        >
+                          <CalendarIcon className="mr-2 h-4 w-4" />
+                          {field.value ? format(field.value, "PPP") : <span>Pick a date</span>}
+                        </Button>
+                      </FormControl>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={field.value}
+                        onSelect={handleDateSelect}
+                        disabled={(date) => date > new Date() || date < new Date("1900-01-01")}
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-          <div className="space-y-2">
-            <Label>Duration</Label>
-            <div className="flex items-center space-x-2">
-              <Clock className="h-4 w-4 text-muted-foreground" />
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <Label htmlFor="hours" className="sr-only">
-                    Hours
-                  </Label>
-                  <Input
-                    id="hours"
-                    type="number"
-                    min="0"
-                    placeholder="Hours"
-                    value={hours}
-                    onChange={handleHoursChange}
-                    onClick={(e) => e.currentTarget.select()}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="minutes" className="sr-only">
-                    Minutes
-                  </Label>
-                  <Input
-                    id="minutes"
-                    type="number"
-                    min="0"
-                    max="59"
-                    placeholder="Minutes"
-                    value={minutes}
-                    onChange={handleMinutesChange}
-                    onClick={(e) => e.currentTarget.select()}
-                    required
-                  />
-                </div>
+            <div className="space-y-4">
+              <div className="flex items-center">
+                <Clock className="h-4 w-4 mr-2 text-muted-foreground" />
+                <span>Duration</span>
               </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <FormField
+                  control={form.control}
+                  name="hours"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Hours</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          min="0"
+                          placeholder="Hours"
+                          {...field}
+                          onChange={(e) => {
+                            const value = e.target.value === "" ? 0 : Number.parseInt(e.target.value, 10)
+                            field.onChange(isNaN(value) ? 0 : value)
+                          }}
+                          onClick={(e) => e.currentTarget.select()}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="minutes"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Minutes</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          min="0"
+                          max="59"
+                          placeholder="Minutes"
+                          {...field}
+                          onChange={(e) => {
+                            const value = e.target.value === "" ? 0 : Number.parseInt(e.target.value, 10)
+                            field.onChange(isNaN(value) ? 0 : value)
+                          }}
+                          onClick={(e) => e.currentTarget.select()}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {hasDurationError && (
+                <p className="text-sm font-medium text-destructive">Duration must be greater than 0</p>
+              )}
             </div>
-            {error && (
-              <Alert variant="destructive" className="mt-2">
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-          </div>
-        </CardContent>
-        <CardFooter className="pb-4">
-          <Button type="submit" className="w-full">
-            {existingActivity ? "Update Activity" : "Log Hours"}
-          </Button>
-        </CardFooter>
-      </form>
+          </CardContent>
+
+          <CardFooter className="pb-4">
+            <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
+              {existingActivity ? "Update Activity" : "Log Hours"}
+            </Button>
+          </CardFooter>
+        </form>
+      </Form>
     </Card>
   )
 }

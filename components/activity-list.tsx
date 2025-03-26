@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { useVolunteer } from "@/context/volunteer-context"
 import { format } from "date-fns"
-import { Edit, Trash2, GripVertical, Undo2 } from "lucide-react"
+import { Edit, Trash2, Undo2, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -23,23 +23,11 @@ import type { VolunteerActivity } from "@/types/volunteer"
 import { useToast } from "@/hooks/use-toast"
 import { globalActions } from "@/lib/global-actions"
 import { eventBus } from "@/lib/event-bus"
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core"
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable"
-import { CSS } from "@dnd-kit/utilities"
 import { cn } from "@/lib/utils"
+
+// Define sort types
+type SortField = "date" | "name" | "organization" | "duration"
+type SortDirection = "asc" | "desc"
 
 // Custom hook for activity actions
 function useActivityActions() {
@@ -124,49 +112,22 @@ function useActivityActions() {
   }
 }
 
-// Sortable activity row component
-function SortableActivityRow({
+// Activity row component
+function ActivityRow({
   activity,
   onEdit,
   onDelete,
   isHighlighted,
+  formatDuration,
 }: {
   activity: VolunteerActivity
   onEdit: (activity: VolunteerActivity) => void
   onDelete: (activity: VolunteerActivity) => void
   isHighlighted: boolean
+  formatDuration: (hours: number, minutes: number) => string
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: activity.id })
-
-  const { formatDuration } = useActivityActions()
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  }
-
   return (
-    <TableRow
-      ref={setNodeRef}
-      style={style}
-      className={cn(
-        "transition-colors",
-        isDragging && "bg-muted/50 outline outline-2 outline-primary/20",
-        isHighlighted && "animate-highlight",
-      )}
-    >
-      <TableCell>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="cursor-grab active:cursor-grabbing"
-          {...attributes}
-          {...listeners}
-        >
-          <GripVertical className="h-4 w-4 text-muted-foreground" />
-          <span className="sr-only">Reorder</span>
-        </Button>
-      </TableCell>
+    <TableRow className={cn("transition-colors", isHighlighted && "animate-highlight")}>
       <TableCell>{format(new Date(activity.date), "MMM d, yyyy")}</TableCell>
       <TableCell>{activity.name || "-"}</TableCell>
       <TableCell>{activity.organization}</TableCell>
@@ -188,10 +149,58 @@ function SortableActivityRow({
   )
 }
 
+// Sort header component
+function SortableHeader({
+  label,
+  field,
+  currentSort,
+  onSort,
+}: {
+  label: string
+  field: SortField | null
+  currentSort: { field: SortField; direction: SortDirection }
+  onSort: (field: SortField) => void
+}) {
+  // Skip sort functionality for fields that are not sortable
+  if (!field) {
+    return <TableHead>{label}</TableHead>
+  }
+
+  const isActive = currentSort.field === field
+  const icon = isActive ? (
+    currentSort.direction === "asc" ? (
+      <ArrowUp className="ml-1 h-4 w-4" />
+    ) : (
+      <ArrowDown className="ml-1 h-4 w-4" />
+    )
+  ) : (
+    <ArrowUpDown className="ml-1 h-4 w-4" />
+  )
+
+  return (
+    <TableHead>
+      <Button
+        variant="ghost"
+        size="sm"
+        className={cn("-ml-3 h-8 font-medium flex items-center", isActive ? "text-primary" : "text-muted-foreground")}
+        onClick={() => onSort(field)}
+      >
+        {label}
+        {icon}
+      </Button>
+    </TableHead>
+  )
+}
+
 // Main ActivityList component
 export function ActivityList() {
-  const { activities, reorderActivities } = useVolunteer()
+  const { activities } = useVolunteer()
   const [highlightedActivityId, setHighlightedActivityId] = useState<string | null>(null)
+  const [sortConfig, setSortConfig] = useState<{ field: SortField; direction: SortDirection }>({
+    field: "date",
+    direction: "desc",
+  })
+
   const {
     editingActivity,
     isEditDialogOpen,
@@ -204,32 +213,37 @@ export function ActivityList() {
     handleEditComplete,
     handleDeleteClick,
     handleConfirmDelete,
+    formatDuration,
   } = useActivityActions()
 
-  // Set up sensors for drag and drop
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 8, // 8px movement required before drag starts
-      },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
-  )
-
-  // Handle drag end event
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event
-
-    if (over && active.id !== over.id) {
-      const oldIndex = activities.findIndex((activity) => activity.id === active.id)
-      const newIndex = activities.findIndex((activity) => activity.id === over.id)
-
-      // Reorder activities
-      reorderActivities(oldIndex, newIndex)
-    }
+  // Handle sort change
+  const handleSort = (field: SortField) => {
+    setSortConfig((prevConfig) => ({
+      field,
+      direction: prevConfig.field === field && prevConfig.direction === "asc" ? "desc" : "asc",
+    }))
   }
+
+  // Sort activities based on current sort configuration
+  const sortedActivities = [...activities].sort((a, b) => {
+    const { field, direction } = sortConfig
+    const multiplier = direction === "asc" ? 1 : -1
+
+    switch (field) {
+      case "date":
+        return multiplier * (new Date(a.date).getTime() - new Date(b.date).getTime())
+      case "name":
+        return multiplier * (a.name || "").localeCompare(b.name || "")
+      case "organization":
+        return multiplier * a.organization.localeCompare(b.organization)
+      case "duration":
+        const aDuration = a.hours * 60 + a.minutes
+        const bDuration = b.hours * 60 + b.minutes
+        return multiplier * (aDuration - bDuration)
+      default:
+        return 0
+    }
+  })
 
   // Listen for activity events (both new and restored)
   useEffect(() => {
@@ -269,37 +283,35 @@ export function ActivityList() {
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[50px]"></TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Organization</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead className="w-[100px]">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <SortableContext
-                  items={activities.map((activity) => activity.id)}
-                  strategy={verticalListSortingStrategy}
-                >
-                  {activities.map((activity) => (
-                    <SortableActivityRow
-                      key={activity.id}
-                      activity={activity}
-                      onEdit={handleEdit}
-                      onDelete={handleDeleteClick}
-                      isHighlighted={activity.id === highlightedActivityId}
-                    />
-                  ))}
-                </SortableContext>
-              </TableBody>
-            </Table>
-          </DndContext>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <SortableHeader label="Date" field="date" currentSort={sortConfig} onSort={handleSort} />
+                <SortableHeader label="Name" field="name" currentSort={sortConfig} onSort={handleSort} />
+                <SortableHeader
+                  label="Organization"
+                  field="organization"
+                  currentSort={sortConfig}
+                  onSort={handleSort}
+                />
+                <TableHead>Description</TableHead>
+                <SortableHeader label="Duration" field="duration" currentSort={sortConfig} onSort={handleSort} />
+                <TableHead className="w-[100px]">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {sortedActivities.map((activity) => (
+                <ActivityRow
+                  key={activity.id}
+                  activity={activity}
+                  onEdit={handleEdit}
+                  onDelete={handleDeleteClick}
+                  isHighlighted={activity.id === highlightedActivityId}
+                  formatDuration={formatDuration}
+                />
+              ))}
+            </TableBody>
+          </Table>
         </div>
       </CardContent>
 

@@ -132,22 +132,6 @@ export function VolunteerProvider({ children }: { children: React.ReactNode }) {
     setActivities((prev) => prev.map((activity) => (activity.id === updatedActivity.id ? updatedActivity : activity)))
   }
 
-  // Function to reorder activities
-  const reorderActivities = (oldIndex: number, newIndex: number) => {
-    setActivities((prev) => {
-      const reorderedActivities = [...prev]
-      const [movedItem] = reorderedActivities.splice(oldIndex, 1)
-      reorderedActivities.splice(newIndex, 0, movedItem)
-      return reorderedActivities
-    })
-
-    // Show a toast notification
-    toast({
-      title: "Activities reordered",
-      description: "The order of your activities has been updated.",
-    })
-  }
-
   const getTotalHours = () => {
     const totalMinutes = activities.reduce((total, activity) => total + activity.hours * 60 + activity.minutes, 0)
 
@@ -181,7 +165,6 @@ export function VolunteerProvider({ children }: { children: React.ReactNode }) {
         addActivity,
         deleteActivity,
         editActivity,
-        reorderActivities,
         getTotalHours,
         clearAllActivities,
         lastDeletedActivity,

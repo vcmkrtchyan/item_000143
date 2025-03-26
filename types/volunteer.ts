@@ -18,7 +18,6 @@ export interface VolunteerContextType {
   addActivity: (activity: Omit<VolunteerActivity, "id">) => void
   deleteActivity: (id: string) => void
   editActivity: (activity: VolunteerActivity) => void
-  reorderActivities: (oldIndex: number, newIndex: number) => void
   getTotalHours: () => { hours: number; minutes: number }
   clearAllActivities: () => void
   lastDeletedActivity: DeletedActivityInfo | null
